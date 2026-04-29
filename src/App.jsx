@@ -1,5 +1,23 @@
 import React, { useMemo, useState } from "react";
-import { Calculator, Car, ClipboardList, FileText, Menu, MoreHorizontal, Percent } from "lucide-react";
+import { Car, Calculator, FileText, Mail, MessageCircle, MoreHorizontal, Percent, X } from "lucide-react";
+import { jsPDF } from "jspdf";
+
+const LENDERS = {
+  VWFS: {
+    name: "VWFS",
+    originationFee: 1595,
+    establishmentFee: 590,
+    ppsr: 0,
+    monthlyAccountFee: 0,
+  },
+  PEPPER: {
+    name: "Pepper Commercial",
+    originationFee: 1990,
+    establishmentFee: 490,
+    ppsr: 8,
+    monthlyAccountFee: 8.95,
+  },
+};
 
 const aud = new Intl.NumberFormat("en-AU", {
   style: "currency",
@@ -20,14 +38,13 @@ function repayment({ amountFinanced, annualRate, months, balloon }) {
   const rate = annualRate / 100 / 12;
   if (!months) return 0;
   if (!rate) return (amountFinanced - balloon) / months;
-
   const balloonPv = balloon / Math.pow(1 + rate, months);
   const adjustedPrincipal = amountFinanced - balloonPv;
-
   return (adjustedPrincipal * rate) / (1 - Math.pow(1 + rate, -months));
 }
 
-export default function CavaloPrestigeFinanceApp() {
+export default function App() {
+  const [lenderKey, setLenderKey] = useState("VWFS");
   const [purchasePrice, setPurchasePrice] = useState("132940");
   const [cashDeposit, setCashDeposit] = useState("0");
   const [tradeAllowance, setTradeAllowance] = useState("15000");
@@ -35,8 +52,10 @@ export default function CavaloPrestigeFinanceApp() {
   const [interestRate, setInterestRate] = useState("7.49");
   const [loanTerm, setLoanTerm] = useState("60");
   const [balloonAmount, setBalloonAmount] = useState("65000");
-  const [fees, setFees] = useState("2190");
   const [editMode, setEditMode] = useState(false);
+  const [actionsOpen, setActionsOpen] = useState(false);
+
+  const lender = LENDERS[lenderKey];
 
   const calc = useMemo(() => {
     const price = cleanNumber(purchasePrice);
@@ -46,58 +65,145 @@ export default function CavaloPrestigeFinanceApp() {
     const rate = cleanNumber(interestRate);
     const months = cleanNumber(loanTerm);
     const balloon = cleanNumber(balloonAmount);
-    const feeTotal = cleanNumber(fees);
 
+    const lenderFees = lender.originationFee + lender.establishmentFee + lender.ppsr;
     const totalEquity = deposit + trade - payout;
     const subtotal = Math.max(price - totalEquity, 0);
-    const amountFinanced = subtotal + feeTotal;
-    const monthly = repayment({ amountFinanced, annualRate: rate, months, balloon });
+    const amountFinanced = subtotal + lenderFees;
+    const baseMonthly = repayment({ amountFinanced, annualRate: rate, months, balloon });
+    const monthly = baseMonthly + lender.monthlyAccountFee;
     const totalPayable = monthly * months + balloon;
 
     return {
-      price,
-      deposit,
-      trade,
-      payout,
-      totalEquity,
-      subtotal,
-      amountFinanced,
-      rate,
-      months,
-      balloon,
+      price, deposit, trade, payout, totalEquity, subtotal,
+      originationFee: lender.originationFee,
+      establishmentFee: lender.establishmentFee,
+      ppsr: lender.ppsr,
+      monthlyAccountFee: lender.monthlyAccountFee,
+      lenderFees, amountFinanced, rate, months, balloon,
       balloonPercent: price ? (balloon / price) * 100 : 0,
-      monthly,
+      baseMonthly, monthly,
       weekly: (monthly * 12) / 52,
       fortnightly: (monthly * 12) / 26,
       totalPayable,
       interest: totalPayable - amountFinanced,
     };
-  }, [purchasePrice, cashDeposit, tradeAllowance, existingPayout, interestRate, loanTerm, balloonAmount, fees]);
+  }, [purchasePrice, cashDeposit, tradeAllowance, existingPayout, interestRate, loanTerm, balloonAmount, lender]);
+
+  const quoteText = `Cavalo Prestige Finance Estimate
+Lender: ${lender.name}
+Purchase Price: ${money(calc.price)}
+Amount Financed: ${money(calc.amountFinanced)}
+Interest Rate: ${calc.rate.toFixed(2)}%
+Term: ${calc.months} months
+Balloon: ${money(calc.balloon)} (${calc.balloonPercent.toFixed(2)}%)
+Estimated Monthly Repayment: ${money(calc.monthly)}
+Weekly Equivalent: ${money(calc.weekly)}
+Fortnightly Equivalent: ${money(calc.fortnightly)}
+
+Estimate only. Subject to lender approval.`;
+
+  function createPdf() {
+    const doc = new jsPDF();
+    doc.setFillColor(0, 0, 0);
+    doc.rect(0, 0, 210, 297, "F");
+
+    doc.setTextColor(255, 255, 255);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(24);
+    doc.text("CAVALO", 105, 22, { align: "center" });
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.text("PRESTIGE", 105, 30, { align: "center" });
+
+    doc.setDrawColor(65, 191, 40);
+    doc.line(20, 38, 190, 38);
+
+    doc.setFontSize(12);
+    doc.setTextColor(180, 180, 180);
+    doc.text("FINANCE CALCULATOR", 105, 52, { align: "center" });
+
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(30);
+    doc.text(money(calc.monthly), 105, 68, { align: "center" });
+    doc.setFontSize(10);
+    doc.setTextColor(170, 170, 170);
+    doc.text("estimated monthly repayment", 105, 76, { align: "center" });
+
+    const rows = [
+      ["Lender", lender.name],
+      ["Purchase Price", money(calc.price)],
+      ["Cash Deposit", money(calc.deposit)],
+      ["Trade Allowance", money(calc.trade)],
+      ["Existing Payout", money(calc.payout)],
+      ["Origination Fee", money(calc.originationFee)],
+      ["Establishment Fee", money(calc.establishmentFee)],
+      ["PPSR", money(calc.ppsr)],
+      ["Monthly Account Fee", money(calc.monthlyAccountFee)],
+      ["Amount Financed", money(calc.amountFinanced)],
+      ["Interest Rate", `${calc.rate.toFixed(2)}% p.a.`],
+      ["Loan Term", `${calc.months} months`],
+      ["Balloon", `${money(calc.balloon)} (${calc.balloonPercent.toFixed(2)}%)`],
+      ["Weekly Equivalent", money(calc.weekly)],
+      ["Fortnightly Equivalent", money(calc.fortnightly)],
+      ["Total Payable", money(calc.totalPayable)],
+    ];
+
+    let y = 94;
+    doc.setFontSize(10);
+    rows.forEach(([label, value]) => {
+      doc.setTextColor(150, 150, 150);
+      doc.text(label, 22, y);
+      doc.setTextColor(255, 255, 255);
+      doc.text(value, 188, y, { align: "right" });
+      doc.setDrawColor(40, 40, 40);
+      doc.line(22, y + 4, 188, y + 4);
+      y += 10;
+    });
+
+    doc.setFontSize(8);
+    doc.setTextColor(130, 130, 130);
+    doc.text("Estimate only. Subject to lender approval. Fees and repayments may vary.", 105, 280, { align: "center" });
+    doc.save("cavalo-finance-quote.pdf");
+  }
+
+  function shareQuote() {
+    if (navigator.share) {
+      navigator.share({ title: "Cavalo Finance Quote", text: quoteText }).catch(() => {});
+    } else {
+      navigator.clipboard.writeText(quoteText);
+      alert("Quote copied to clipboard.");
+    }
+  }
 
   return (
-    <div className="min-h-screen bg-black text-white">
-      <div className="mx-auto min-h-screen max-w-md overflow-hidden border-x border-neutral-900 bg-black pb-28">
+    <div className="app-shell">
+      <div className="phone">
         <TopBar />
 
-        <main className="space-y-5 px-4 pt-6">
+        <main className="content">
           <Hero monthly={calc.monthly} />
 
+          <section className="lender-panel">
+            <p className="eyebrow">LENDER</p>
+            <div className="lender-buttons">
+              <button className={lenderKey === "VWFS" ? "active" : ""} onClick={() => setLenderKey("VWFS")}>VWFS</button>
+              <button className={lenderKey === "PEPPER" ? "active" : ""} onClick={() => setLenderKey("PEPPER")}>Pepper Commercial</button>
+            </div>
+          </section>
+
           <InfoCard
-            icon={<FileText className="h-5 w-5 text-[#41bf28]" />}
+            icon={<FileText />}
             title="Purchase Details"
-            action={
-              <button onClick={() => setEditMode(!editMode)} className="text-sm font-medium text-[#41bf28]">
-                {editMode ? "Done" : "Edit"}
-              </button>
-            }
+            action={<button className="edit-link" onClick={() => setEditMode(!editMode)}>{editMode ? "Done" : "Edit"}</button>}
           >
             {editMode ? (
-              <div className="space-y-4 pt-2">
+              <div className="edit-stack">
                 <EditField label="Purchase Price" value={purchasePrice} setValue={setPurchasePrice} prefix="$" />
                 <EditField label="Less Cash Deposit" value={cashDeposit} setValue={setCashDeposit} prefix="$" />
                 <EditField label="Less Trade Allowance" value={tradeAllowance} setValue={setTradeAllowance} prefix="$" />
                 <EditField label="Add Payout of Existing Finance" value={existingPayout} setValue={setExistingPayout} prefix="$" />
-                <EditField label="Fees / Costs Financed" value={fees} setValue={setFees} prefix="$" />
               </div>
             ) : (
               <>
@@ -111,15 +217,24 @@ export default function CavaloPrestigeFinanceApp() {
             )}
           </InfoCard>
 
-          <InfoCard icon={<Percent className="h-5 w-5 text-[#41bf28]" />} title="Repayment Summary">
+          <InfoCard icon={<Percent />} title="Lender Fees">
+            <Row label="Origination Fee" value={money(calc.originationFee)} />
+            <Row label="Establishment Fee" value={money(calc.establishmentFee)} />
+            <Row label="PPSR" value={money(calc.ppsr)} />
+            <Row label="Monthly Account Keeping Fee" value={money(calc.monthlyAccountFee)} />
+            <Row label="Total Fees Included" value={money(calc.lenderFees)} strong />
+          </InfoCard>
+
+          <InfoCard icon={<Calculator />} title="Repayment Summary">
             {editMode ? (
-              <div className="space-y-4 pt-2">
+              <div className="edit-stack">
                 <EditField label="Interest Rate" value={interestRate} setValue={setInterestRate} suffix="%" />
                 <EditField label="Loan Term" value={loanTerm} setValue={setLoanTerm} suffix="months" />
                 <EditField label="Balloon Amount" value={balloonAmount} setValue={setBalloonAmount} prefix="$" />
               </div>
             ) : (
               <>
+                <Row label="Amount Financed" value={money(calc.amountFinanced)} strong />
                 <Row label="Interest Rate (p.a.)" value={`${calc.rate.toFixed(2)}%`} />
                 <Row label="Loan Term" value={`${calc.months} months`} />
                 <Row label="Balloon (% of Purchase Price)" value={`${calc.balloonPercent.toFixed(2)}%`} />
@@ -128,17 +243,34 @@ export default function CavaloPrestigeFinanceApp() {
               </>
             )}
 
-            <div className="mt-5 rounded-xl bg-white/[0.07] px-4 py-3 shadow-inner">
+            <div className="inner-box">
               <Row label="Monthly Repayment" value={money(calc.monthly)} strong />
-              <Row label="Total Repayable" value={money(calc.totalPayable)} />
-              <Row label="Interest Component" value={money(calc.interest)} />
               <Row label="Weekly Equivalent" value={money(calc.weekly)} />
               <Row label="Fortnightly Equivalent" value={money(calc.fortnightly)} />
+              <Row label="Total Repayable" value={money(calc.totalPayable)} />
+              <Row label="Interest Component" value={money(calc.interest)} />
             </div>
           </InfoCard>
+
+          <p className="disclaimer">Estimate only. Subject to approval, lender policy and final contract terms.</p>
         </main>
 
-        <BottomNav />
+        <BottomNav onMore={() => setActionsOpen(true)} />
+
+        {actionsOpen && (
+          <div className="action-sheet">
+            <div className="sheet-card">
+              <div className="sheet-top">
+                <h3>Client Quote</h3>
+                <button onClick={() => setActionsOpen(false)}><X size={20} /></button>
+              </div>
+              <button onClick={createPdf}><FileText size={18} /> Download PDF Quote</button>
+              <a href={`sms:?&body=${encodeURIComponent(quoteText)}`}><MessageCircle size={18} /> Send to Client via SMS</a>
+              <a href={`mailto:?subject=${encodeURIComponent("Cavalo Finance Quote")}&body=${encodeURIComponent(quoteText)}`}><Mail size={18} /> Send to Client via Email</a>
+              <button onClick={shareQuote}><MoreHorizontal size={18} /> Share / Copy Quote</button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -146,17 +278,10 @@ export default function CavaloPrestigeFinanceApp() {
 
 function TopBar() {
   return (
-    <header className="border-b border-[#41bf28] px-7 pb-5 pt-7">
-      <div className="flex items-center justify-between">
-        <div>
-          <div className="text-4xl font-black leading-none tracking-[0.18em]">CAVALO</div>
-          <div className="mt-1 flex items-center gap-2 text-xs tracking-[0.45em] text-white/80">
-            <span className="h-px w-9 bg-white/70" />
-            PRESTIGE
-            <span className="h-px w-9 bg-white/70" />
-          </div>
-        </div>
-        <Menu className="h-8 w-8 text-white/90" />
+    <header className="topbar">
+      <div>
+        <div className="logo">CAVALO</div>
+        <div className="sub-logo"><span />PRESTIGE<span /></div>
       </div>
     </header>
   );
@@ -164,23 +289,20 @@ function TopBar() {
 
 function Hero({ monthly }) {
   return (
-    <section className="rounded-md border border-white/15 bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.08),rgba(255,255,255,0.02)_55%,transparent)] px-5 py-8 text-center shadow-[0_0_50px_rgba(255,255,255,0.04)]">
-      <Car className="mx-auto h-7 w-7 text-white" />
-      <p className="mt-6 text-lg font-medium tracking-[0.38em] text-white/70">FINANCE CALCULATOR</p>
-      <p className="mt-5 text-6xl font-light tracking-tight text-white">{money(monthly)}</p>
-      <p className="mt-4 text-lg text-white/75">estimated monthly repayment</p>
+    <section className="hero">
+      <Car size={28} />
+      <p>FINANCE CALCULATOR</p>
+      <h1>{money(monthly)}</h1>
+      <span>estimated monthly repayment</span>
     </section>
   );
 }
 
 function InfoCard({ icon, title, action, children }) {
   return (
-    <section className="rounded-md border border-white/15 bg-[linear-gradient(135deg,rgba(255,255,255,0.06),rgba(255,255,255,0.015))] p-5">
-      <div className="mb-6 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          {icon}
-          <h2 className="text-lg font-semibold uppercase tracking-[0.28em] text-white/90">{title}</h2>
-        </div>
+    <section className="card">
+      <div className="card-head">
+        <div className="card-title">{React.cloneElement(icon, { size: 21 })}<h2>{title}</h2></div>
         {action}
       </div>
       {children}
@@ -190,50 +312,34 @@ function InfoCard({ icon, title, action, children }) {
 
 function Row({ label, value, strong = false }) {
   return (
-    <div className="flex items-center justify-between gap-4 border-b border-white/10 py-3 last:border-b-0">
-      <span className="text-[15px] leading-snug text-white/70">{label}</span>
-      <span className={`text-right text-[15px] ${strong ? "font-black text-white" : "font-medium text-white/90"}`}>{value}</span>
+    <div className="row">
+      <span>{label}</span>
+      <b className={strong ? "strong" : ""}>{value}</b>
     </div>
   );
 }
 
 function EditField({ label, value, setValue, prefix, suffix }) {
   return (
-    <label className="block">
-      <span className="mb-1 block text-xs uppercase tracking-[0.22em] text-white/45">{label}</span>
-      <div className="flex items-center rounded-md border border-white/15 bg-black/40 px-3 py-2">
-        {prefix && <span className="text-white/45">{prefix}</span>}
-        <input
-          inputMode="decimal"
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          className="w-full bg-transparent px-2 text-base font-semibold text-white outline-none"
-        />
-        {suffix && <span className="text-sm text-white/45">{suffix}</span>}
+    <label className="field">
+      <span>{label}</span>
+      <div>
+        {prefix && <em>{prefix}</em>}
+        <input inputMode="decimal" value={value} onChange={(e) => setValue(e.target.value)} />
+        {suffix && <em>{suffix}</em>}
       </div>
     </label>
   );
 }
 
-function BottomNav() {
-  const items = [
-    [Calculator, "Calculator", true],
-    [Car, "Vehicles", false],
-    [ClipboardList, "My Quotes", false],
-    [MoreHorizontal, "More", false],
-  ];
-
+function BottomNav({ onMore }) {
   return (
-    <nav className="fixed bottom-0 left-1/2 z-20 w-full max-w-md -translate-x-1/2 border-t border-white/15 bg-black/95 px-5 pb-6 pt-3 backdrop-blur">
-      <div className="grid grid-cols-4 gap-2">
-        {items.map(([Icon, label, active]) => (
-          <button key={label} className="flex flex-col items-center gap-1 text-xs">
-            <Icon className={`h-6 w-6 ${active ? "text-[#41bf28]" : "text-white/75"}`} />
-            <span className={active ? "text-[#41bf28]" : "text-white/75"}>{label}</span>
-          </button>
-        ))}
-      </div>
-      <div className="mx-auto mt-5 h-1 w-32 rounded-full bg-white" />
+    <nav className="bottom-nav">
+      <button className="selected"><Calculator size={23} /><span>Calculator</span></button>
+      <button><Car size={23} /><span>Vehicles</span></button>
+      <button><FileText size={23} /><span>Quotes</span></button>
+      <button onClick={onMore}><MoreHorizontal size={23} /><span>Send</span></button>
+      <i />
     </nav>
   );
 }
